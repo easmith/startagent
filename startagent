@@ -9,20 +9,31 @@ MIT License. See README.md.
 from __future__ import annotations
 
 import getpass
+import http.client
 import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-VERSION = "0.2.0"
-XDG_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+VERSION = "0.2.1"
+
+
+def _env_path(name: str, default: Path) -> Path:
+    value = os.environ.get(name)
+    if not value:
+        return default
+    return Path(value).expanduser()
+
+
+XDG_CONFIG = _env_path("XDG_CONFIG_HOME", Path.home() / ".config")
 DEFAULT_CONFIG_DIR = XDG_CONFIG / "startagent"
 LEGACY_CONFIG_DIR = XDG_CONFIG / "deepseek"
 
@@ -145,6 +156,7 @@ PROVIDERS: dict[str, Provider] = {
 }
 
 PROVIDER_ORDER = ("deepseek", "kimi", "glm", "minimax")
+PROVIDER_KEYS = (*PROVIDER_ORDER, "custom")
 
 
 def make_custom_provider(
@@ -245,7 +257,7 @@ def install_text(agent: Agent) -> str:
 
 
 def config_dir() -> Path:
-    return Path(os.environ.get("STARTAGENT_CONFIG_DIR", DEFAULT_CONFIG_DIR))
+    return _env_path("STARTAGENT_CONFIG_DIR", DEFAULT_CONFIG_DIR)
 
 
 def ensure_dir(path: Path) -> None:
@@ -257,11 +269,21 @@ def ensure_dir(path: Path) -> None:
 
 
 def _write_private(path: Path, text: str) -> None:
-    ensure_dir(path.parent)
-    tmp = path.parent / (path.name + ".tmp")
-    tmp.write_text(text)
-    tmp.chmod(0o600)
-    os.replace(tmp, path)
+    try:
+        ensure_dir(path.parent)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=path.parent, prefix=path.name + ".", suffix=".tmp"
+        )
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            os.replace(tmp, path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+    except OSError as exc:
+        raise StartagentError(f"cannot write {path}: {exc}") from exc
 
 
 def save_provider_config(
@@ -308,7 +330,7 @@ def load_current(directory: Path) -> dict | None:
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise StartagentError(f"cannot read {path}: {exc}") from exc
     if not isinstance(data, dict) or "provider" not in data:
@@ -321,7 +343,7 @@ def load_provider_config(directory: Path, provider_key: str) -> dict | None:
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise StartagentError(f"cannot read {path}: {exc}") from exc
     if not isinstance(data, dict):
@@ -333,7 +355,7 @@ def read_key(directory: Path, provider_key: str) -> str | None:
     path = directory / f"{provider_key}.key"
     if not path.is_file():
         return None
-    value = path.read_text().strip()
+    value = path.read_text(encoding="utf-8").strip()
     return value or None
 
 
@@ -345,7 +367,7 @@ def find_legacy_key(
     legacy = legacy_dir or LEGACY_CONFIG_DIR
     for candidate in (legacy / "api_key", legacy / "deepseek" / "api_key"):
         if candidate.is_file():
-            value = candidate.read_text().strip()
+            value = candidate.read_text(encoding="utf-8").strip()
             return value or None
     return None
 
@@ -380,6 +402,8 @@ def load_run_context(directory: Path, provider_key: str | None = None) -> RunCon
     key = provider_key or current.get("provider")
     if not key:
         raise StartagentError("no configuration found — run: startagent --setup")
+    if key not in PROVIDER_KEYS:
+        raise StartagentError(f"unknown provider: {key}")
     cfg = load_provider_config(directory, key)
     if not cfg:
         raise StartagentError(
@@ -596,9 +620,9 @@ def install_self(target_dir: Path | None = None) -> Path | None:
     """Last setup step: install this script as `startagent` on PATH."""
     source = Path(__file__).resolve()
     if target_dir is None:
-        target_dir = Path(
-            os.environ.get("STARTAGENT_INSTALL_DIR", Path.home() / ".local" / "bin")
-        ).expanduser()
+        target_dir = _env_path(
+            "STARTAGENT_INSTALL_DIR", Path.home() / ".local" / "bin"
+        )
     target = target_dir / "startagent"
 
     if target.exists() and target.resolve() == source:
@@ -748,7 +772,7 @@ def choose(prompt: str, options: list[tuple[str, str]], default: int = 1) -> str
 
 
 def choose_provider(default_key: str | None = None) -> str:
-    keys = [*PROVIDER_ORDER, "custom"]
+    keys = list(PROVIDER_KEYS)
     options = []
     for key in PROVIDER_ORDER:
         provider = PROVIDERS[key]
@@ -822,9 +846,9 @@ def resolve_key(provider: Provider, directory: Path) -> str:
         return existing
 
     for env_name in (provider.key_env, *provider.key_alt_envs):
-        value = os.environ.get(env_name)
+        value = (os.environ.get(env_name) or "").strip()
         if value and ask_yes(f"Use ${env_name}?", True):
-            return value.strip()
+            return value
 
     legacy = find_legacy_key(directory, provider.key)
     if legacy and ask_yes("Found an old DeepSeek key. Use it?", True):
@@ -844,7 +868,7 @@ def resolve_key(provider: Provider, directory: Path) -> str:
 
 def run_setup(directory: Path, provider_key: str | None = None, agent_key: str | None = None) -> None:
     current = load_current(directory) or {}
-    existing_keys = [*PROVIDER_ORDER, "custom"]
+    existing_keys = list(PROVIDER_KEYS)
     if provider_key not in existing_keys:
         provider_key = None
     if not provider_key:
@@ -922,7 +946,7 @@ def cmd_list(directory: Path) -> int:
     agent_entry = AGENTS.get(agent_key)
     print(f"Agent: {agent_entry.title if agent_entry else agent_key}")
     print(f"Provider: {current.get('provider')}")
-    for key in (*PROVIDER_ORDER, "custom"):
+    for key in PROVIDER_KEYS:
         cfg = load_provider_config(directory, key)
         if not cfg:
             continue
@@ -969,24 +993,27 @@ def cmd_print(directory: Path, provider_key: str | None = None) -> int:
 def cmd_check(directory: Path, provider_key: str | None = None) -> int:
     ctx = load_run_context(directory, provider_key)
     url, headers, body = check_request(ctx.provider, str(ctx.cfg.get("model") or ""), ctx.key)
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode(),
-        headers=headers,
-        method="POST",
-    )
     detail = ""
     try:
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode(),
+            headers=headers,
+            method="POST",
+        )
         with urllib.request.urlopen(request, timeout=30) as response:
             code = response.status
     except urllib.error.HTTPError as exc:
         code = exc.code
         try:
             detail = exc.read().decode(errors="replace")[:300]
-        except OSError:
+        except (OSError, http.client.HTTPException):
             detail = ""
-    except urllib.error.URLError as exc:
-        raise StartagentError(f"network error: {exc.reason}") from exc
+    except ValueError as exc:
+        raise StartagentError(f"invalid endpoint: {exc}") from exc
+    except (OSError, http.client.HTTPException) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise StartagentError(f"network error: {reason}") from exc
 
     model = strip_context_suffix(str(ctx.cfg.get("model") or ""))
     if code == 200:
@@ -1015,7 +1042,7 @@ Usage:
   startagent --list               show saved configuration
   startagent <command> [args...]  run any command with the provider environment
 
-Providers: {", ".join((*PROVIDER_ORDER, "custom"))}
+Providers: {", ".join(PROVIDER_KEYS)}
 Agents:    {", ".join(AGENT_ORDER)}
 Config:    {DEFAULT_CONFIG_DIR} (override: STARTAGENT_CONFIG_DIR)
 """
@@ -1070,17 +1097,17 @@ def main(argv: list[str] | None = None) -> int:
             break
 
     directory = config_dir()
+    if provider is not None and provider not in PROVIDER_KEYS:
+        raise StartagentError(f"unknown provider: {provider}")
+    if agent is not None and agent not in AGENTS:
+        raise StartagentError(f"unknown agent: {agent}")
+
     if do_list:
         return cmd_list(directory)
     if do_print:
         return cmd_print(directory, provider)
     if do_check:
         return cmd_check(directory, provider)
-
-    if provider and provider not in (*PROVIDER_ORDER, "custom"):
-        raise StartagentError(f"unknown provider: {provider}")
-    if agent and agent not in AGENTS:
-        raise StartagentError(f"unknown agent: {agent}")
 
     current = load_current(directory)
     if do_setup or current is None:
@@ -1109,6 +1136,7 @@ def main(argv: list[str] | None = None) -> int:
             "use --agent or run startagent --setup"
         )
     if target_provider != current.get("provider") or target_agent != current.get("agent"):
+        require_agent(target_agent)
         save_current(directory, target_provider, target_agent)
 
     if rest and rest[0] in AGENTS:

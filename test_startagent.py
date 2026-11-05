@@ -14,6 +14,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent
 SCRIPT = ROOT / "startagent"
@@ -140,6 +141,82 @@ class ConfigTests(unittest.TestCase):
             self.m["find_legacy_key"](self.dir, "deepseek", legacy), "sk-legacy"
         )
         self.assertIsNone(self.m["find_legacy_key"](self.dir, "kimi", legacy))
+
+    def test_empty_config_dir_env_falls_back(self):
+        with mock.patch.dict(os.environ, {"STARTAGENT_CONFIG_DIR": ""}):
+            self.assertEqual(self.m["config_dir"](), self.m["DEFAULT_CONFIG_DIR"])
+
+    def test_config_dir_expands_user(self):
+        with mock.patch.dict(
+            os.environ, {"STARTAGENT_CONFIG_DIR": "~/startagent-test"}
+        ):
+            self.assertEqual(
+                self.m["config_dir"](), Path.home() / "startagent-test"
+            )
+
+    def test_empty_xdg_config_home_falls_back(self):
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": ""}):
+            m = load_module()
+        self.assertEqual(
+            m["DEFAULT_CONFIG_DIR"], Path.home() / ".config" / "startagent"
+        )
+
+    def test_write_private_keeps_mode_when_chmod_fails(self):
+        target = self.dir / "secret"
+        with mock.patch.object(Path, "chmod", side_effect=OSError("denied")):
+            self.m["_write_private"](target, "value")
+        self.assertEqual(target.read_text(encoding="utf-8"), "value")
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+
+    def test_write_private_reports_unwritable_path(self):
+        blocked = self.dir / "blocked"
+        blocked.write_text("not a directory", encoding="utf-8")
+        with self.assertRaises(self.m["StartagentError"]):
+            self.m["_write_private"](blocked / "file", "value")
+
+    def test_config_roundtrip_is_utf8(self):
+        custom = self.m["make_custom_provider"](
+            "Мой шлюз",
+            "https://gw.example/anthropic",
+            "",
+            "модель[1m]",
+            "",
+            "",
+            200000,
+        )
+        def ascii_when_unset(encoding, stacklevel=2):
+            return encoding if encoding is not None else "ascii"
+
+        with mock.patch("io.text_encoding", side_effect=ascii_when_unset):
+            self.m["save_provider_config"](
+                self.dir, custom, "модель[1m]", "", "", "sk-test"
+            )
+            loaded = self.m["load_provider_config"](self.dir, "custom")
+        self.assertEqual(loaded["title"], "Мой шлюз")
+
+
+class KeyResolutionTests(unittest.TestCase):
+    def setUp(self):
+        self.m = load_module()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.m["resolve_key"].__globals__["find_legacy_key"] = (
+            lambda directory, provider_key, legacy_dir=None: None
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_whitespace_only_env_key_is_ignored(self):
+        self.m["resolve_key"].__globals__["ask_yes"] = (
+            lambda prompt, default=True: True
+        )
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "   "}):
+            with mock.patch("getpass.getpass", return_value="sk-real"):
+                key = self.m["resolve_key"](
+                    self.m["PROVIDERS"]["deepseek"], self.dir
+                )
+        self.assertEqual(key, "sk-real")
 
 
 class RenderTests(unittest.TestCase):
@@ -300,6 +377,51 @@ class LaunchTests(unittest.TestCase):
         r = self.run_cli("--agent", "codex")
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(self.m["load_current"](self.cfg)["agent"], "claude")
+
+    def test_failed_agent_switch_does_not_save(self):
+        r = self.run_cli("--agent", "codex")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.m["load_current"](self.cfg)["agent"], "claude")
+
+    def test_print_rejects_provider_outside_config_dir(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "probe.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "key": "deepseek",
+                    "title": "Probe",
+                    "anthropic_url": "https://api.deepseek.com/anthropic",
+                    "openai_url": None,
+                    "model": "probe-model",
+                    "fast_model": "probe-fast",
+                    "effort": "max",
+                    "compact_window": None,
+                    "codex_url": None,
+                    "context_window": 1048576,
+                    "key_env": "DEEPSEEK_API_KEY",
+                    "key_url": "",
+                    "custom": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (outside / "probe.key").write_text("sk-probe", encoding="utf-8")
+        r = self.run_cli("--print", "--provider", "../outside/probe")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("unknown provider", r.stderr)
+
+    def test_check_reports_invalid_url_without_traceback(self):
+        custom = self.m["make_custom_provider"](
+            "X", "gw.example/anthropic", "", "m", "m", "", 200000
+        )
+        self.m["save_provider_config"](self.cfg, custom, "m", "", "", "sk-test")
+        self.m["save_current"](self.cfg, "custom", "claude")
+        r = self.run_cli("--check")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("invalid endpoint", r.stderr)
 
 
 class InstallTests(unittest.TestCase):
