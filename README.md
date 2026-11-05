@@ -27,20 +27,23 @@ startagent --provider kimi
 
 ## Install
 
+The package is published as `startagent-cli`; the command it installs is
+`startagent`.
+
 Run without installing (needs [uv](https://docs.astral.sh/uv/)):
 
 ```sh
-uvx startagent
+uvx startagent-cli
 ```
 
 Install as a command:
 
 ```sh
-uv tool install startagent
+uv tool install startagent-cli
 # or
-pipx install startagent
+pipx install startagent-cli
 # or
-pip install startagent
+pip install startagent-cli
 ```
 
 From a clone (installs the local checkout into `~/.local/bin`):

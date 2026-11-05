@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "startagent"
+name = "startagent-cli"
 dynamic = ["version"]
 description = "Universal launcher for Claude Code, Codex, OpenCode and Qwen Code without vendor lock"
 readme = "README.md"
@@ -28,6 +28,7 @@ Issues = "https://github.com/easmith/startagent/issues"
 
 [project.scripts]
 startagent = "startagent:cli"
+startagent-cli = "startagent:cli"
 
 [tool.setuptools]
 py-modules = ["startagent"]

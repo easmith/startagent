@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 
 
 def _env_path(name: str, default: Path) -> Path:
