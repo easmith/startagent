@@ -27,19 +27,39 @@ startagent --provider kimi
 
 ## Install
 
+Run without installing (needs [uv](https://docs.astral.sh/uv/)):
+
 ```sh
-git clone <this-repo> startagent
-cd startagent
-./install.sh                 # installs ~/.local/bin/startagent
+uvx startagent
 ```
 
-Or copy the `startagent` file to any directory on your `PATH` and make it
-executable:
+Install as a command:
 
 ```sh
-cp startagent ~/.local/bin/startagent
+uv tool install startagent
+# or
+pipx install startagent
+# or
+pip install startagent
+```
+
+From a clone (installs the local checkout into `~/.local/bin`):
+
+```sh
+git clone https://github.com/easmith/startagent.git startagent
+cd startagent
+./install.sh                 # or: ./install.sh /custom/bin
+```
+
+Or copy `startagent.py` to any directory on your `PATH` as `startagent` and
+make it executable:
+
+```sh
+cp startagent.py ~/.local/bin/startagent
 chmod +x ~/.local/bin/startagent
 ```
+
+Make sure `~/.local/bin` is on your `PATH`.
 
 ## Quick start
 
@@ -163,6 +183,7 @@ Override the config directory with `STARTAGENT_CONFIG_DIR` (useful for tests).
 ## Development
 
 ```sh
+python3 startagent.py --version   # run from the checkout
 python3 -m unittest -v test_startagent.py
 ```
 

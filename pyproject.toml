@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "startagent"
+dynamic = ["version"]
+description = "Universal launcher for Claude Code, Codex, OpenCode and Qwen Code without vendor lock"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Eugene Smith", email = "easmith@mail.ru" }]
+keywords = ["ai", "agents", "claude-code", "codex", "opencode", "qwen", "cli"]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.urls]
+Homepage = "https://github.com/easmith/startagent"
+Repository = "https://github.com/easmith/startagent"
+Issues = "https://github.com/easmith/startagent/issues"
+
+[project.scripts]
+startagent = "startagent:cli"
+
+[tool.setuptools]
+py-modules = ["startagent"]
+
+[tool.setuptools.dynamic]
+version = { attr = "startagent.VERSION" }

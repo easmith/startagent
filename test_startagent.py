@@ -2,6 +2,8 @@
 """Tests for startagent. Run with: python3 -m unittest -v test_startagent.py"""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import runpy
@@ -17,7 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent
-SCRIPT = ROOT / "startagent"
+SCRIPT = ROOT / "startagent.py"
 
 FAKE_AGENT = r"""#!/bin/sh
 echo "CMD=$(basename "$0")"
@@ -99,6 +101,77 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(p.main_models[0].id, "my-model[1m]")
         self.assertIsNone(p.codex_url)
         self.assertEqual(p.openai_url, "https://gw.example/v1")
+
+
+class ModuleTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.m = load_module()
+
+    def test_python_m_startagent_version(self):
+        r = subprocess.run(
+            [sys.executable, "-m", "startagent", "--version"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"startagent {self.m['VERSION']}", r.stdout)
+
+
+class CliTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.m = load_module()
+
+    def test_cli_version(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.m["cli"](["--version"]), 0)
+        self.assertIn(f"startagent {self.m['VERSION']}", out.getvalue())
+
+    def test_cli_reports_user_errors(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.m["cli"](["--bogus"]), 1)
+        self.assertIn("unknown flag", err.getvalue())
+
+
+class InstallerScriptTests(unittest.TestCase):
+    def test_installs_local_copy(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            shutil.copy(ROOT / "install.sh", root / "install.sh")
+            shutil.copy(ROOT / "startagent.py", root / "startagent.py")
+            target_dir = root / "bin"
+            r = subprocess.run(
+                ["sh", str(root / "install.sh"), str(target_dir)],
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            target = target_dir / "startagent"
+            self.assertEqual(
+                target.read_bytes(), (ROOT / "startagent.py").read_bytes()
+            )
+            self.assertTrue(os.access(target, os.X_OK))
+
+    def test_uses_install_dir_env(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            shutil.copy(ROOT / "install.sh", root / "install.sh")
+            shutil.copy(ROOT / "startagent.py", root / "startagent.py")
+            target_dir = root / "env-bin"
+            env = os.environ.copy()
+            env["STARTAGENT_INSTALL_DIR"] = str(target_dir)
+            r = subprocess.run(
+                ["sh", str(root / "install.sh")],
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((target_dir / "startagent").exists())
 
 
 class ConfigTests(unittest.TestCase):
@@ -504,8 +577,9 @@ class SelfInstallTests(unittest.TestCase):
         self.assertIsNone(self.m["install_self"](target_dir))
         self.assertFalse((target_dir / "startagent").exists())
 
-    def test_skips_when_target_is_source(self):
-        self.assertEqual(self.m["install_self"](SCRIPT.parent), SCRIPT)
+    def test_skips_when_already_on_path(self):
+        with mock.patch("shutil.which", return_value=str(SCRIPT)):
+            self.assertEqual(self.m["install_self"](self.root / "bin"), SCRIPT)
 
 
 class WizardTests(unittest.TestCase):

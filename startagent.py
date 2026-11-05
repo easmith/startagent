@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 
 
 def _env_path(name: str, default: Path) -> Path:
@@ -1164,12 +1164,16 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
+def cli(argv: list[str] | None = None) -> int:
     try:
-        raise SystemExit(main())
+        return main(argv)
     except KeyboardInterrupt:
         print("", file=sys.stderr)
-        raise SystemExit(130)
+        return 130
     except StartagentError as exc:
         print(f"startagent: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())
