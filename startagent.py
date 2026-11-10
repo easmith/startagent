@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 
 
 def _env_path(name: str, default: Path) -> Path:
@@ -556,6 +556,14 @@ def claude_env(
             "CLAUDE_CODE_SUBAGENT_MODEL": fast,
         }
     )
+    # The security-guidance plugin sends these values straight to /v1/messages: the [1m]
+    # suffix is Claude Code-only, and its Anthropic defaults do not exist on these endpoints.
+    review_model = strip_context_suffix(model)
+    if review_model:
+        if not env.get("SECURITY_REVIEW_MODEL", "").strip():
+            env["SECURITY_REVIEW_MODEL"] = review_model
+        if not env.get("SG_AGENTIC_MODEL", "").strip():
+            env["SG_AGENTIC_MODEL"] = review_model
     env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     if effort:
         env["CLAUDE_CODE_EFFORT_LEVEL"] = effort
@@ -977,6 +985,8 @@ def cmd_print(directory: Path, provider_key: str | None = None) -> int:
         "ANTHROPIC_DEFAULT_HAIKU_MODEL",
         "ANTHROPIC_DEFAULT_FABLE_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "SECURITY_REVIEW_MODEL",
+        "SG_AGENTIC_MODEL",
         "CLAUDE_CODE_EFFORT_LEVEL",
         "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
     )

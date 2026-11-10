@@ -134,6 +134,17 @@ Anthropic-compatible base URL.
 | OpenCode | isolated `OPENCODE_CONFIG` JSON, Anthropic provider override |
 | Qwen Code | `OPENAI_*` environment variables |
 
+### Claude Code security reviews
+
+When Claude Code runs through a non-Anthropic provider, `startagent` also exports
+`SECURITY_REVIEW_MODEL` and `SG_AGENTIC_MODEL` with the selected provider's main
+model. The `[1m]` suffix is removed: it is a Claude Code convention, while the
+`security-guidance` plugin sends the value verbatim to the provider's
+`/v1/messages`. Without these variables the plugin asks for Anthropic model IDs
+that the provider does not serve, and its reviews fail with "the model's reply
+could not be read". An explicitly set `SECURITY_REVIEW_MODEL` or
+`SG_AGENTIC_MODEL` is preserved; use that to review with a different model.
+
 If the selected agent is not installed, the wizard shows its official
 install command and asks before running it. Nothing is installed silently.
 Declining is fine: the config is still saved, and the wizard tells you the

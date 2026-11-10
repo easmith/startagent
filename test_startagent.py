@@ -26,6 +26,8 @@ echo "CMD=$(basename "$0")"
 echo "BASE=${ANTHROPIC_BASE_URL:-}"
 echo "MODEL=${ANTHROPIC_MODEL:-}"
 echo "FAST=${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}"
+echo "REVIEW=${SECURITY_REVIEW_MODEL:-}"
+echo "AGENTIC=${SG_AGENTIC_MODEL:-}"
 echo "TOKEN=${ANTHROPIC_AUTH_TOKEN:+set}"
 echo "OPENAI_BASE=${OPENAI_BASE_URL:-}"
 echo "OPENAI_MODEL=${OPENAI_MODEL:-}"
@@ -53,6 +55,8 @@ class FakeBin:
         # cannot change the outcome.
         env = os.environ.copy()
         env["PATH"] = os.pathsep.join([str(self.bin), "/bin", "/usr/bin"])
+        env.pop("SECURITY_REVIEW_MODEL", None)
+        env.pop("SG_AGENTIC_MODEL", None)
         env.update(extra)
         return env
 
@@ -378,6 +382,45 @@ class EnvTests(unittest.TestCase):
         self.assertNotIn("CLAUDE_CODE_EFFORT_LEVEL", env)
         self.assertNotIn("CLAUDE_CODE_AUTO_COMPACT_WINDOW", env)
 
+    def test_claude_env_sets_review_models(self):
+        p = self.m["PROVIDERS"]["deepseek"]
+        with mock.patch.dict(os.environ, {}, clear=True):
+            env = self.m["claude_env"](p, "deepseek-flash[1m]", "deepseek-flash", "k", "", None)
+        self.assertEqual(env["SECURITY_REVIEW_MODEL"], "deepseek-flash")
+        self.assertEqual(env["SG_AGENTIC_MODEL"], "deepseek-flash")
+
+    def test_claude_env_keeps_explicit_review_models(self):
+        p = self.m["PROVIDERS"]["deepseek"]
+        with mock.patch.dict(
+            os.environ,
+            {
+                "SECURITY_REVIEW_MODEL": "my-review-model",
+                "SG_AGENTIC_MODEL": "my-agentic-model",
+            },
+            clear=True,
+        ):
+            env = self.m["claude_env"](p, "deepseek-flash[1m]", "deepseek-flash", "k", "", None)
+        self.assertEqual(env["SECURITY_REVIEW_MODEL"], "my-review-model")
+        self.assertEqual(env["SG_AGENTIC_MODEL"], "my-agentic-model")
+
+    def test_claude_env_replaces_empty_review_models(self):
+        p = self.m["PROVIDERS"]["deepseek"]
+        with mock.patch.dict(
+            os.environ,
+            {"SECURITY_REVIEW_MODEL": "", "SG_AGENTIC_MODEL": " "},
+            clear=True,
+        ):
+            env = self.m["claude_env"](p, "deepseek-flash[1m]", "deepseek-flash", "k", "", None)
+        self.assertEqual(env["SECURITY_REVIEW_MODEL"], "deepseek-flash")
+        self.assertEqual(env["SG_AGENTIC_MODEL"], "deepseek-flash")
+
+    def test_claude_env_leaves_review_models_unset_without_model(self):
+        p = self.m["PROVIDERS"]["deepseek"]
+        with mock.patch.dict(os.environ, {}, clear=True):
+            env = self.m["claude_env"](p, "", "deepseek-flash", "k", "", None)
+        self.assertNotIn("SECURITY_REVIEW_MODEL", env)
+        self.assertNotIn("SG_AGENTIC_MODEL", env)
+
 
 class LaunchTests(unittest.TestCase):
     def setUp(self):
@@ -410,6 +453,8 @@ class LaunchTests(unittest.TestCase):
         self.assertIn("BASE=https://api.deepseek.com/anthropic", r.stdout)
         self.assertIn("MODEL=deepseek-flash[1m]", r.stdout)
         self.assertIn("FAST=deepseek-flash", r.stdout)
+        self.assertIn("REVIEW=deepseek-flash", r.stdout)
+        self.assertIn("AGENTIC=deepseek-flash", r.stdout)
         self.assertIn("TOKEN=set", r.stdout)
 
     def test_qwen_env(self):
@@ -440,6 +485,8 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("sk-test", r.stdout)
         self.assertIn("$(cat", r.stdout)
+        self.assertIn("export SECURITY_REVIEW_MODEL=deepseek-flash", r.stdout)
+        self.assertIn("export SG_AGENTIC_MODEL=deepseek-flash", r.stdout)
 
     def test_unsupported_agent_switch_does_not_save(self):
         p = self.m["PROVIDERS"]["minimax"]
